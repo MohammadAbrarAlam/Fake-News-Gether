@@ -1,0 +1,6 @@
+{
+  "name": "MapPulse",
+  "description": "Interactive map-based chatbot with real-time Google Search grounding to answer location-specific questions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

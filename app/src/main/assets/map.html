@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>MapPulse Interactive Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+    html, body, #map {
+      width: 100%;
+      height: 100%;
+      background: #0B1426;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      overflow: hidden;
+    }
+    /* Custom Neon Pin Style */
+    .pulse-marker {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .pulse-pin {
+      width: 28px;
+      height: 28px;
+      border-radius: 50% 50% 50% 0;
+      background: linear-gradient(135deg, #00E5FF, #0077FF);
+      transform: rotate(-45deg);
+      border: 2px solid #FFFFFF;
+      box-shadow: 0 0 12px rgba(0, 229, 255, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.2s ease;
+    }
+    .pulse-pin:active {
+      transform: rotate(-45deg) scale(1.15);
+    }
+    .pulse-pin-inner {
+      width: 10px;
+      height: 10px;
+      background: #0B1426;
+      border-radius: 50%;
+      transform: rotate(45deg);
+    }
+    .poi-pin {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: #00E676;
+      border: 2px solid #FFFFFF;
+      box-shadow: 0 0 10px rgba(0, 230, 118, 0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      color: #0B1426;
+      font-weight: bold;
+    }
+    .user-loc-pin {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #00E5FF;
+      border: 3px solid #FFFFFF;
+      box-shadow: 0 0 15px #00E5FF;
+      position: relative;
+    }
+    .user-loc-halo {
+      position: absolute;
+      top: -10px;
+      left: -10px;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: rgba(0, 229, 255, 0.25);
+      animation: pulse-ring 2s infinite ease-out;
+    }
+    @keyframes pulse-ring {
+      0% { transform: scale(0.6); opacity: 0.9; }
+      100% { transform: scale(1.5); opacity: 0; }
+    }
+    /* Custom Popup Styles */
+    .leaflet-popup-content-wrapper {
+      background: #111E38 !important;
+      color: #FFFFFF !important;
+      border-radius: 12px !important;
+      border: 1px solid #1E3A6E !important;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6) !important;
+      padding: 4px 6px !important;
+    }
+    .leaflet-popup-tip {
+      background: #111E38 !important;
+      border: 1px solid #1E3A6E !important;
+    }
+    .popup-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #00E5FF;
+      margin-bottom: 3px;
+    }
+    .popup-desc {
+      font-size: 11px;
+      color: #CBD5E1;
+      line-height: 1.4;
+    }
+    .popup-action {
+      display: inline-block;
+      margin-top: 6px;
+      padding: 4px 10px;
+      background: #0077FF;
+      color: #FFFFFF;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    let map;
+    let selectedMarker = null;
+    let userMarker = null;
+    let poiMarkers = [];
+    let tileLayer;
+
+    const DARK_TILES = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+    const LIGHT_TILES = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+    const OSM_TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+    function initMap(initialLat = 37.7749, initialLng = -122.4194, initialZoom = 13, isDark = true) {
+      map = L.map('map', {
+        zoomControl: false,
+        attributionControl: false
+      }).setView([initialLat, initialLng], initialZoom);
+
+      const tileUrl = isDark ? DARK_TILES : LIGHT_TILES;
+      tileLayer = L.tileLayer(tileUrl, {
+        maxZoom: 19,
+        subdomains: 'abcd'
+      }).addTo(map);
+
+      // Tap on map handler
+      map.on('click', function(e) {
+        const lat = e.latlng.lat;
+        const lng = e.latlng.lng;
+        setSelectionPin(lat, lng, "Selected Location", "Tap to query Gemini");
+        if (window.AndroidBridge && window.AndroidBridge.onLocationSelected) {
+          window.AndroidBridge.onLocationSelected(lat, lng);
+        }
+      });
+
+      // Map move handler
+      map.on('moveend', function() {
+        const center = map.getCenter();
+        if (window.AndroidBridge && window.AndroidBridge.onMapMoved) {
+          window.AndroidBridge.onMapMoved(center.lat, center.lng, map.getZoom());
+        }
+      });
+    }
+
+    function setSelectionPin(lat, lng, title = "Selected Point", desc = "") {
+      if (selectedMarker) {
+        map.removeLayer(selectedMarker);
+      }
+      const icon = L.divIcon({
+        className: 'pulse-marker',
+        html: '<div class="pulse-pin"><div class="pulse-pin-inner"></div></div>',
+        iconSize: [28, 28],
+        iconAnchor: [14, 28]
+      });
+
+      selectedMarker = L.marker([lat, lng], { icon: icon }).addTo(map);
+      selectedMarker.bindPopup(`
+        <div class="popup-title">${title}</div>
+        <div class="popup-desc">${desc || (lat.toFixed(4) + ", " + lng.toFixed(4))}</div>
+        <div class="popup-action" onclick="askAboutSelected()">Ask MapPulse AI</div>
+      `).openPopup();
+    }
+
+    function askAboutSelected() {
+      if (selectedMarker) {
+        const latlng = selectedMarker.getLatLng();
+        if (window.AndroidBridge && window.AndroidBridge.onAskAboutLocation) {
+          window.AndroidBridge.onAskAboutLocation(latlng.lat, latlng.lng);
+        }
+      }
+    }
+
+    function flyToLocation(lat, lng, zoom = 15) {
+      if (map) {
+        map.flyTo([lat, lng], zoom, { duration: 1.2 });
+        setSelectionPin(lat, lng, "Queried Location");
+      }
+    }
+
+    function addPoiMarker(id, title, desc, lat, lng, category = "place") {
+      if (!map) return;
+      let badge = "📍";
+      if (category.toLowerCase().includes("food") || category.toLowerCase().includes("cafe") || category.toLowerCase().includes("restaurant")) badge = "☕";
+      else if (category.toLowerCase().includes("hotel") || category.toLowerCase().includes("stay")) badge = "🏨";
+      else if (category.toLowerCase().includes("shop")) badge = "🛍️";
+      else if (category.toLowerCase().includes("park") || category.toLowerCase().includes("nature")) badge = "🌳";
+      else if (category.toLowerCase().includes("museum") || category.toLowerCase().includes("art")) badge = "🏛️";
+
+      const icon = L.divIcon({
+        className: 'pulse-marker',
+        html: `<div class="poi-pin">${badge}</div>`,
+        iconSize: [26, 26],
+        iconAnchor: [13, 13]
+      });
+
+      const marker = L.marker([lat, lng], { icon: icon }).addTo(map);
+      marker.bindPopup(`
+        <div class="popup-title">${title}</div>
+        <div class="popup-desc">${desc}</div>
+        <div class="popup-action" onclick="onPoiClicked('${id}', '${title.replace(/'/g, "\\'")}', ${lat}, ${lng})">Explore in Chat</div>
+      `);
+      poiMarkers.push(marker);
+    }
+
+    function onPoiClicked(id, title, lat, lng) {
+      if (window.AndroidBridge && window.AndroidBridge.onPoiSelected) {
+        window.AndroidBridge.onPoiSelected(id, title, lat, lng);
+      }
+    }
+
+    function clearPoiMarkers() {
+      poiMarkers.forEach(m => map.removeLayer(m));
+      poiMarkers = [];
+    }
+
+    function setUserLocation(lat, lng) {
+      if (!map) return;
+      if (userMarker) {
+        map.removeLayer(userMarker);
+      }
+      const icon = L.divIcon({
+        className: 'pulse-marker',
+        html: '<div class="user-loc-halo"></div><div class="user-loc-pin"></div>',
+        iconSize: [18, 18],
+        iconAnchor: [9, 9]
+      });
+      userMarker = L.marker([lat, lng], { icon: icon }).addTo(map);
+    }
+
+    function setTileMode(isDark) {
+      if (!map || !tileLayer) return;
+      map.removeLayer(tileLayer);
+      const url = isDark ? DARK_TILES : LIGHT_TILES;
+      tileLayer = L.tileLayer(url, { maxZoom: 19, subdomains: 'abcd' }).addTo(map);
+    }
+
+    // Auto-init fallback
+    window.addEventListener('DOMContentLoaded', () => {
+      initMap(37.7749, -122.4194, 13, true);
+    });
+  </script>
+</body>
+</html>
